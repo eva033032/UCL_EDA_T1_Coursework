@@ -1,0 +1,57 @@
+---
+- name: Setup Worker Nodes for Coursework
+  hosts: workers
+  become: yes
+  tasks:
+    - name: 1. Install System Dependencies
+      dnf:
+        name:
+          - git
+          - wget
+          - python3-pip
+          - tar
+          - gcc-c++
+          - cmake
+        state: present
+
+    - name: 2. Install Python Libraries
+      pip:
+        name:
+          - biopython
+          - torch
+          - numpy
+          - scipy
+
+    - name: 3. Create Tools Directory
+      file:
+        path: /opt/tools
+        state: directory
+        mode: '0777'
+
+    - name: 4. Install S4Pred
+      git:
+        repo: 'https://github.com/psipred/s4pred.git'
+        dest: /opt/tools/s4pred
+
+    - name: 5. Install HH-suite
+      git:
+        repo: 'https://github.com/soedinglab/hh-suite.git'
+        dest: /opt/tools/hh-suite
+
+    - name: 6. Add Lecturer's SSH Key
+      authorized_key:
+        user: almalinux
+        state: present
+        key: "{{ lookup('file', 'lecturer_key.pub') }}"
+
+    - name: 7. Create Data Directory
+      file:
+        path: /data/pdb70
+        state: directory
+        mode: '0777'
+        recurse: yes
+
+    - name: 8. Download PDB70 Database (Robust Method)
+      shell: "nohup wget -O /data/pdb70/pdb70_from_mmcif_latest.tar.gz https://wwwuser.gwdg.de/~compbiol/data/hhsuite/databases/hhsuite_dbs/pdb70_from_mmcif_latest.tar.gz > /data/pdb70/download.log 2>&1 &"
+      async: 10
+      poll: 0
