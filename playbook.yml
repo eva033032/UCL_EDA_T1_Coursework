@@ -3,7 +3,7 @@
   hosts: workers
   become: yes
   tasks:
-    - name: 1. Install System Dependencies
+    - name: 1. Install System Dependencies (Crucial for Compilation)
       dnf:
         name:
           - git
@@ -12,6 +12,7 @@
           - tar
           - gcc-c++
           - cmake
+          - zlib-devel  # 確保編譯器能運作
         state: present
 
     - name: 2. Install Python Libraries
@@ -28,15 +29,30 @@
         state: directory
         mode: '0777'
 
-    - name: 4. Install S4Pred
+    # --- S4Pred 修復區 ---
+    - name: 4.1 Install S4Pred Code
       git:
         repo: 'https://github.com/psipred/s4pred.git'
         dest: /opt/tools/s4pred
+        force: yes
 
-    - name: 5. Install HH-suite
+    - name: 4.2 Download S4Pred Weights (Missing Piece)
+      get_url:
+        url: http://bioinfadmin.cs.ucl.ac.uk/downloads/s4pred/weights.tar.gz
+        dest: /opt/tools/s4pred/weights.tar.gz
+
+    - name: 4.3 Extract S4Pred Weights
+      unarchive:
+        src: /opt/tools/s4pred/weights.tar.gz
+        dest: /opt/tools/s4pred/
+        remote_src: yes
+    # ---------------------
+
+    - name: 5. Install HH-suite Code
       git:
         repo: 'https://github.com/soedinglab/hh-suite.git'
         dest: /opt/tools/hh-suite
+        force: yes
 
     - name: 6. Add Lecturer's SSH Key
       authorized_key:
@@ -51,7 +67,32 @@
         mode: '0777'
         recurse: yes
 
-    - name: 8. Download PDB70 Database (Robust Method)
+    - name: 8. Download PDB70 Database (Skip if exists)
       shell: "nohup wget -O /data/pdb70/pdb70_from_mmcif_latest.tar.gz https://wwwuser.gwdg.de/~compbiol/data/hhsuite/databases/hhsuite_dbs/pdb70_from_mmcif_latest.tar.gz > /data/pdb70/download.log 2>&1 &"
       async: 10
       poll: 0
+      args:
+        creates: /data/pdb70/pdb70_from_mmcif_latest.tar.gz
+
+    # --- HH-suite 修復區 ---
+    - name: 9. Compile HH-suite (Build and Install)
+      shell: |
+        cd /opt/tools/hh-suite
+        rm -rf build
+        mkdir -p build
+        cd build
+        # 關鍵參數：告訴它安裝到當前目錄
+        cmake -DCMAKE_INSTALL_PREFIX=. ..
+        make -j 2
+        make install  # ★ 關鍵動作：這步才會產生 bin 資料夾
+      # 這一步會跑 5-10 分鐘，請耐心等待
+
+    - name: 10. Deploy Pipeline Scripts and Data
+      copy:
+        src: "{{ item }}"
+        dest: /home/almalinux/
+        mode: '0755'
+      loop:
+        - pipeline_script.py
+        - results_parser.py
+        - pipeline_example/test.fa
