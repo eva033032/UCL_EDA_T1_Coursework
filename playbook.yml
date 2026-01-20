@@ -1,4 +1,92 @@
 ---
+# ====================================================
+# 第一部分：Host 設定 (RabbitMQ Server + Producer 環境)
+# ====================================================
+- name: Setup Host Machine (RabbitMQ Server)
+  hosts: host
+  become: yes
+  tasks:
+    # --- ★ 新增 1: 安裝 EPEL (擴充軟體包) ---
+    - name: 0. Install EPEL Release (Basic Requirement)
+      dnf:
+        name: epel-release
+        state: present
+
+    # --- ★ 新增 2: 設定 Erlang 下載源 (RabbitMQ 是用 Erlang 寫的，這是依賴) ---
+    - name: 1. Setup Erlang Repository
+      shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/erlang/script.rpm.sh | bash"
+      args:
+        creates: /etc/yum.repos.d/rabbitmq_erlang.repo # 如果檔案已存在就不重複執行
+
+    # --- ★ 新增 3: 設定 RabbitMQ 下載源 ---
+    - name: 2. Setup RabbitMQ Repository
+      shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/rabbitmq-server/script.rpm.sh | bash"
+      args:
+        creates: /etc/yum.repos.d/rabbitmq_rabbitmq-server.repo
+
+    # --- 這裡開始接原本的安裝步驟 ---
+    - name: 3. Install RabbitMQ Server
+      dnf:
+        name: rabbitmq-server
+        state: present
+
+    - name: 4. Start and Enable RabbitMQ Service
+      service:
+        name: rabbitmq-server
+        state: started
+        enabled: yes
+    # ==========================================
+    # ★ 插入這段：安裝防火牆的 Python 模組
+    # ==========================================
+    - name: 4.5 Install Python Firewall Library
+      dnf:
+        name: python3-firewall
+        state: present
+    # ==========================================
+    # ==========================================
+    # ★ 插入這段：安裝並啟動 Firewalld 服務
+    # ==========================================
+    - name: 4.6 Install Firewalld Service
+      dnf:
+        name: firewalld
+        state: present
+
+    - name: 4.7 Start and Enable Firewalld
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+    # ==========================================
+    - name: 5. Open Firewall for RabbitMQ (Port 5672)
+      firewalld:
+        port: 5672/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+    
+    # 這裡也要確保 Host 有裝 Python, pip 和 git，不然裝 pika 會報錯
+    - name: 6. Install Python/Pip on Host
+      dnf:
+        name: 
+          - python3
+          - python3-pip
+          - git 
+        state: present
+
+    - name: 7. Install Pika (Python Client for Producer)
+      pip:
+        name: pika
+        state: present
+
+    - name: 8. Add Lecturer's SSH Key to Host
+      authorized_key:
+        user: almalinux
+        state: present
+        key: "{{ lookup('file', 'lecturer_key.pub') }}"
+
+# ====================================================
+# 第二部分：Workers 設定 (您的原始邏輯 + Pika)
+# ====================================================
 - name: Setup Worker Nodes for Coursework
   hosts: workers
   become: yes
@@ -12,16 +100,18 @@
           - tar
           - gcc-c++
           - cmake
-          - zlib-devel  # 確保編譯器能運作
+          - zlib-devel
         state: present
 
-    - name: 2. Install Python Libraries
+    - name: 2. Install Python Libraries (Added pika)
       pip:
         name:
           - biopython
           - torch
           - numpy
           - scipy
+          - pika  # <--- 新增這個！讓 Worker 能跟 RabbitMQ 講話
+        state: present
 
     - name: 3. Create Tools Directory
       file:
@@ -36,7 +126,7 @@
         dest: /opt/tools/s4pred
         force: yes
 
-    - name: 4.2 Download S4Pred Weights (Missing Piece)
+    - name: 4.2 Download S4Pred Weights
       get_url:
         url: http://bioinfadmin.cs.ucl.ac.uk/downloads/s4pred/weights.tar.gz
         dest: /opt/tools/s4pred/weights.tar.gz
@@ -81,11 +171,11 @@
         rm -rf build
         mkdir -p build
         cd build
-        # 關鍵參數：告訴它安裝到當前目錄
         cmake -DCMAKE_INSTALL_PREFIX=. ..
         make -j 2
-        make install  # ★ 關鍵動作：這步才會產生 bin 資料夾
-      # 這一步會跑 5-10 分鐘，請耐心等待
+        make install
+      args:
+        creates: /opt/tools/hh-suite/build/bin/hhsearch # 避免重複編譯節省時間
 
     - name: 10. Deploy Pipeline Scripts and Data
       copy:
