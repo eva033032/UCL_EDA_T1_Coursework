@@ -1,0 +1,186 @@
+---
+# ====================================================
+# Part 1: Host Configuration (RabbitMQ Server + Producer Environment)
+# ====================================================
+- name: Setup Host Machine (RabbitMQ Server)
+  hosts: host
+  become: yes
+  tasks:
+    # --- Install EPEL (Extra Packages) ---
+    - name: 0. Install EPEL Release (Basic Requirement)
+      dnf:
+        name: epel-release
+        state: present
+
+    # --- Setup Erlang Repository (RabbitMQ is written in Erlang, this is a dependency) ---
+    - name: 1. Setup Erlang Repository
+      shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/erlang/script.rpm.sh | bash"
+      args:
+        creates: /etc/yum.repos.d/rabbitmq_erlang.repo # Do not execute again if the file already exists
+
+    # --- Setup RabbitMQ Repository ---
+    - name: 2. Setup RabbitMQ Repository
+      shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/rabbitmq-server/script.rpm.sh | bash"
+      args:
+        creates: /etc/yum.repos.d/rabbitmq_rabbitmq-server.repo
+
+    - name: 3. Install RabbitMQ Server
+      dnf:
+        name: rabbitmq-server
+        state: present
+
+    - name: 4. Start and Enable RabbitMQ Service
+      service:
+        name: rabbitmq-server
+        state: started
+        enabled: yes
+    # ==========================================
+    # Install Python Firewall Module
+    # ==========================================
+    - name: 4.5 Install Python Firewall Library
+      dnf:
+        name: python3-firewall
+        state: present
+    # ==========================================
+    # Install and Start Firewalld Service
+    # ==========================================
+    - name: 4.6 Install Firewalld Service
+      dnf:
+        name: firewalld
+        state: present
+
+    - name: 4.7 Start and Enable Firewalld
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+    # ==========================================
+    - name: 5. Open Firewall for RabbitMQ (Port 5672)
+      firewalld:
+        port: 5672/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+    
+    # Ensure Host has Python, pip, and git installed, otherwise pika installation will fail
+    - name: 6. Install Python/Pip on Host
+      dnf:
+        name: 
+          - python3
+          - python3-pip
+          - git 
+        state: present
+
+    - name: 7. Install Pika (Python Client for Producer)
+      pip:
+        name: pika
+        state: present
+
+    - name: 8. Add Lecturer's SSH Key to Host
+      authorized_key:
+        user: almalinux
+        state: present
+        key: "{{ lookup('file', 'lecturer_key.pub') }}"
+
+# ====================================================
+# Part 2: Workers Configuration (Your Original Logic + Pika)
+# ====================================================
+- name: Setup Worker Nodes for Coursework
+  hosts: workers
+  become: yes
+  tasks:
+    - name: 1. Install System Dependencies (Crucial for Compilation)
+      dnf:
+        name:
+          - git
+          - wget
+          - python3-pip
+          - tar
+          - gcc-c++
+          - cmake
+          - zlib-devel
+        state: present
+
+    - name: 2. Install Python Libraries (Added pika)
+      pip:
+        name:
+          - biopython
+          - torch
+          - numpy
+          - scipy
+          - pika 
+        state: present
+
+    - name: 3. Create Tools Directory
+      file:
+        path: /opt/tools
+        state: directory
+        mode: '0777'
+
+    # --- S4Pred ---
+    - name: 4.1 Install S4Pred Code
+      git:
+        repo: 'https://github.com/psipred/s4pred.git'
+        dest: /opt/tools/s4pred
+        force: yes
+
+    - name: 4.2 Download S4Pred Weights
+      get_url:
+        url: http://bioinfadmin.cs.ucl.ac.uk/downloads/s4pred/weights.tar.gz
+        dest: /opt/tools/s4pred/weights.tar.gz
+
+    - name: 4.3 Extract S4Pred Weights
+      unarchive:
+        src: /opt/tools/s4pred/weights.tar.gz
+        dest: /opt/tools/s4pred/
+        remote_src: yes
+    # ---------------------
+
+    - name: 5. Install HH-suite Code
+      git:
+        repo: 'https://github.com/soedinglab/hh-suite.git'
+        dest: /opt/tools/hh-suite
+        force: yes
+
+    - name: 6. Add Lecturer's SSH Key
+      authorized_key:
+        user: almalinux
+        state: present
+        key: "{{ lookup('file', 'lecturer_key.pub') }}"
+
+    - name: 7. Create Data Directory
+      file:
+        path: /data/pdb70
+        state: directory
+        mode: '0777'
+        recurse: yes
+
+    - name: 8. Download PDB70 Database (Skip if exists)
+      shell: "nohup wget -O /data/pdb70/pdb70_from_mmcif_latest.tar.gz https://wwwuser.gwdg.de/~compbiol/data/hhsuite/databases/hhsuite_dbs/pdb70_from_mmcif_latest.tar.gz > /data/pdb70/download.log 2>&1 &"
+      async: 10
+      poll: 0
+      args:
+        creates: /data/pdb70/pdb70_from_mmcif_latest.tar.gz
+
+    # --- HH-suite ---
+    - name: 9. Compile HH-suite (Build and Install)
+      shell: |
+        cd /opt/tools/hh-suite
+        rm -rf build
+        mkdir -p build
+        cd build
+        cmake -DCMAKE_INSTALL_PREFIX=. ..
+        make -j 2
+        make install
+      args:
+        creates: /opt/tools/hh-suite/build/bin/hhsearch # Avoid recompilation to save time
+
+    - name: 10. Deploy Pipeline Scripts and Data
+      copy:
+        src: "{{ item }}"
+        dest: /home/almalinux/
+        mode: '0755'
+      loop:
+        - pipeline_script.py
+        - results_parser.py
+        - pipeline_example/test.fa

@@ -1,0 +1,22 @@
+# --- 1. Folders ---
+build_cluster/
+collected_results/
+final_data/
+coursework_example_output/
+pipeline_example/
+__pycache__/
+.terraform/
+
+# --- 2. Large Files---
+*.fasta
+*.fa
+*.tar.gz
+*.gz
+*.zip
+*.out
+*.log
+*.iso
+
+# --- 3. System Junk ---
+._*
+.DS_Store
