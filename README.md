@@ -182,9 +182,3 @@ python3 create_final_report.py
 * `install_netdata.yml`: Playbook for installing Netdata monitoring agent.
 * `test-authorized-keys.sh`: Script to verify SSH connectivity across the cluster.
 * `lecturer_key.pub`: Public key for lecturer access.
-
-### Static Partitioning (Reference Only)
-
-* `distribute_work.py`: Script for static file splitting.
-* `collect_results.py`: Old SCP-based collector.
-* `final_results.csv`: Output from the stat
