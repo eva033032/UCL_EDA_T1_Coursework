@@ -6,11 +6,11 @@ from Bio import SeqIO
 import shutil
 
 """
-usage: python pipeline_script.py INPUT.fasta  
+usage: python pipeline_script.py INPUT.fasta  
 """
 
 # ==========================================
-# 路徑設定
+# Path Settings
 # ==========================================
 S4PRED_SCRIPT = '/opt/tools/s4pred/run_model.py'
 HHSEARCH_BIN = '/opt/tools/hh-suite/build/bin/hhsearch'
@@ -76,15 +76,15 @@ if __name__ == "__main__":
     hhr_file = "tmp.hhr"
     
     for k, v in sequences.items():
-        # ★★★【續傳機制】檢查是否已完成 ★★★
+        # Resume capability: Check if analysis is already done
         final_output = f'{k}_parse.out'
         if os.path.exists(final_output):
-            # 如果檔案已經存在，直接跳過，不印訊息以免 Log 爆炸
+            # If the file exists, skip it. Don't print a message to avoid cluttering the log.
             continue 
 
         print(f'Now analysing input: {k}')
         
-        # ★★★【防護網】★★★
+        # Safety net (Error handling)
         try:
             with open(tmp_file, "w") as fh_out:
                 fh_out.write(f">{k}\n")

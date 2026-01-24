@@ -1,8 +1,8 @@
 import os
 import sys
-import math  # <--- 新增數學模組來抓出 nan
+import math
 
-# ================= 設定區 =================
+# ================= Settings =================
 RESULTS_DIR = "final_data"            
 ID_FILE = "experiment_ids.txt"        
 OUTPUT_HITS = "final_hits_output.csv"       
@@ -19,26 +19,26 @@ def get_clean_id(header_string):
         return header_string
 
 def main():
-    print(f"🚀 開始彙整報告 (排除 NaN 壞值模式)...")
+    print(f"🚀 Starting report compilation (NaN exclusion mode)...")
     
     if not os.path.exists(ID_FILE):
-        print(f"❌ 錯誤: 找不到 {ID_FILE}")
+        print(f"❌ Error: File not found {ID_FILE}")
         sys.exit(1)
 
     with open(ID_FILE, 'r') as f:
         target_ids = set(line.strip() for line in f if line.strip())
     
-    # 準備容器
+    # Prepare containers
     hits_data = []      
     all_stds = []       
     all_gmeans = []     
     found_ids = set()   
     
-    # 統計壞掉的數據
+    # Count invalid data (NaN)
     nan_count = 0 
     
     files = os.listdir(RESULTS_DIR)
-    print(f"📂 正在掃描 {len(files)} 個檔案...")
+    print(f"📂 Scanning {len(files)} files...")
 
     for filename in files:
         if not filename.endswith(".out"):
@@ -65,25 +65,25 @@ def main():
                         best_hit = parts[1]
                         
                         try:
-                            # --- 關鍵修正：檢查 NaN ---
+                            # --- Key Fix: Check for NaN ---
                             val_std = float(parts[5])
                             val_gmean = float(parts[6])
 
-                            # 如果是 nan (無效數值)，就跳過，不要加進清單
+                            # If nan (invalid value), skip it; do not add to list
                             if math.isnan(val_std) or math.isnan(val_gmean):
                                 nan_count += 1
-                                # 雖然數值壞了，但 ID 算是有跑過，還是可以加到 hits 嗎？
-                                # 通常 nan 代表計算失敗，建議這裡先不加入統計
+                                # Even if values are bad, the ID ran. Should it count as a hit?
+                                # NaN usually means calculation failure. Suggest excluding from stats.
                                 continue 
                             
-                            # 數值正常才加入
+                            # Add only valid values
                             all_stds.append(val_std)
                             all_gmeans.append(val_gmean)
                             
-                            # 加入 Hits 清單
+                            # Add to Hits list
                             hits_data.append(f"{raw_id},{best_hit}")
 
-                            # 記錄 ID
+                            # Record ID
                             clean_id = get_clean_id(raw_id)
                             if clean_id in target_ids:
                                 found_ids.add(clean_id)
@@ -99,17 +99,17 @@ def main():
         except Exception:
             pass 
 
-    # 3. 輸出 Hits CSV
-    print(f"💾 寫入 {OUTPUT_HITS} (共 {len(hits_data)} 筆)...")
+    # 3. Output Hits CSV
+    print(f"💾 Writing {OUTPUT_HITS} ({len(hits_data)} records)...")
     with open(OUTPUT_HITS, 'w') as f:
         f.write("fasta_id,best_hit_id\n") 
         for line in hits_data:
             f.write(line + "\n")
 
-    # 4. 輸出 Profile CSV
-    print(f"💾 計算 {OUTPUT_PROFILE} ...")
-    print(f"   ℹ️  排除掉的 NaN 資料數: {nan_count} 筆")
-    print(f"   ℹ️  有效納入計算的資料數: {len(all_stds)} 筆")
+    # 4. Output Profile CSV
+    print(f"💾 Calculating {OUTPUT_PROFILE} ...")
+    print(f"   ℹ️  Excluded NaN data count: {nan_count}")
+    print(f"   ℹ️  Valid data used for calculation: {len(all_stds)}")
 
     if len(all_stds) > 0:
         avg_std = sum(all_stds) / len(all_stds)
@@ -119,20 +119,20 @@ def main():
             f.write("ave_std,ave_gmean\n")
             f.write(f"{avg_std:.2f},{avg_gmean:.2f}\n")
             
-        print(f"   ✅ 成功！Ave STD = {avg_std:.2f}, Ave GMean = {avg_gmean:.2f}")
+        print(f"   ✅ Success! Ave STD = {avg_std:.2f}, Ave GMean = {avg_gmean:.2f}")
     else:
-        print("❌ 錯誤: 所有數據都是 NaN 或沒有數據，無法計算平均值！")
+        print("❌ Error: All data is NaN or missing. Cannot calculate averages!")
 
-    # 5. 缺漏檢查
+    # 5. Missing Check
     missing_ids = target_ids - found_ids
     print("-" * 30)
     if missing_ids:
-        print(f"⚠️ 尚有 {len(missing_ids)} 個任務未完成或數值為 NaN")
+        print(f"⚠️ There are {len(missing_ids)} tasks incomplete or NaN")
         with open(MISSING_FILE, 'w') as f:
             for mid in sorted(missing_ids):
                 f.write(mid + "\n")
     else:
-        print("🎉 完美！所有任務已完成！")
+        print(" Perfect! All tasks completed!")
 
 if __name__ == "__main__":
     main()

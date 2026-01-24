@@ -4,7 +4,6 @@
   become: yes
   tasks:
     - name: Download and install Netdata
-      # 修正：加上 -L 讓 curl 跟隨重新導向
       shell: "curl -L https://my-netdata.io/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --non-interactive --stable-channel"
       args:
         creates: /usr/sbin/netdata

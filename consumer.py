@@ -5,95 +5,93 @@ import os
 import time
 
 # ==========================================
-# 設定區 (請修改這裡！)
+# Configuration
 # ==========================================
-HOST_IP = '10.134.12.209'  # <--- 請填入 Host 的內網 IP
+HOST_IP = '10.134.12.209'
 QUEUE_NAME = 'task_queue'
 PIPELINE_SCRIPT = '/home/almalinux/pipeline_script.py'
 # ==========================================
 
 def run_pipeline(protein_id, sequence):
     """
-    將單一蛋白質寫入暫存檔，呼叫 pipeline，並將結果存檔
+    Write a single protein to a temp file, call the pipeline, and save the results.
     """
-    # 1. 建立暫存檔
+    # 1. Create temporary file
     temp_filename = f"job_{protein_id}.fa"
     safe_filename = temp_filename.replace('|', '_')
     
-    # 建立輸出檔名 (重要！每個 ID 要有獨立的檔案，才不會互相覆蓋)
-    # 我們把 '|' 換成 '_' 以免檔名出錯
+    # Create output filename (Important! Each ID needs a unique file to avoid overwriting)
+    # We replace '|' with '_' to avoid filename errors
     safe_id = protein_id.replace('|', '_')
     output_filename = f"{safe_id}.out"
 
     with open(safe_filename, "w") as f:
         f.write(f">{protein_id}\n{sequence}\n")
     
-    print(f" [Running] 處理蛋白質: {protein_id}")
+    print(f" [Running] Processing protein: {protein_id}")
 
-    # 2. 呼叫外部指令
+    # 2. Call external command
     cmd = ["python3", PIPELINE_SCRIPT, safe_filename]
     
     try:
-        # 執行並捕捉輸出
+        # Execute and capture output
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
-        # ★★★ 關鍵修正：將結果寫入檔案 ★★★
-        # 如果 pipeline 是印出到螢幕 (stdout)，我們就存 stdout
+        # If the pipeline prints to screen (stdout), save stdout
         if result.stdout:
             with open(output_filename, "w") as f:
                 f.write(result.stdout)
                 
-        # 如果 pipeline 是產生固定檔名 (如 hhr_parse.out)，我們就把它改名
-        # (這裡做個雙重保險)
+        # If the pipeline produces a fixed filename (e.g., hhr_parse.out), rename it
+        # (Double insurance here)
         elif os.path.exists("hhr_parse.out"):
              os.rename("hhr_parse.out", output_filename)
 
-        print(f" [Done] 成功產出: {output_filename}")
+        print(f" [Done] Successfully generated: {output_filename}")
         
-        # 3. 清理暫存檔
+        # 3. Clean up temporary file
         if os.path.exists(safe_filename):
             os.remove(safe_filename)
             
     except subprocess.CalledProcessError as e:
-        print(f" [Error] 失敗: {protein_id}")
-        print(f"錯誤訊息: {e.stderr}")
+        print(f" [Error] Failed: {protein_id}")
+        print(f"Error message: {e.stderr}")
 
 def callback(ch, method, properties, body):
     """
-    RabbitMQ 的回呼函數，當收到訊息時會執行這裡
+    RabbitMQ callback function, executed when a message is received.
     """
     data = json.loads(body)
     run_pipeline(data['id'], data['sequence'])
     
-    # 關鍵：告訴 RabbitMQ "我做完了，可以把這則訊息刪掉了"
+    # Key: Tell RabbitMQ "I'm done, you can delete this message now"
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def main():
-    print(f" [*] 正在連線到 Host ({HOST_IP})...")
+    print(f" [*] Connecting to Host ({HOST_IP})...")
     
     try:
-        # ★ 修改開始：加入帳號密碼認證
+        # Add username/password authentication
         credentials = pika.PlainCredentials('admin', 'admin123')
-        # # 加入 heartbeat=0，告訴 Server 不要因為我算太久就踢掉我
+        # Add heartbeat=0 to tell Server not to kick me out for taking too long
         parameters = pika.ConnectionParameters(HOST_IP, 5672, '/', credentials, heartbeat=0)
         connection = pika.BlockingConnection(parameters)
-        # ★ 修改結束
         channel = connection.channel()
         channel.queue_declare(queue=QUEUE_NAME, durable=True)
 
-        # 關鍵優化：負載平衡
-        # prefetch_count=1 代表 "我手上這個沒做完，不要給我下一個"
-        # 這保證了 Load Average 不會爆衝，且工作會自動分配給比較閒的 Worker
+        # Key optimization: Load balancing
+        # prefetch_count=1 means "Don't give me the next one until I finish this one"
+        # This ensures Load Average doesn't spike, and work is distributed to idle Workers
         channel.basic_qos(prefetch_count=1)
 
         channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback)
 
-        print(' [*] 等待任務中... 按 CTRL+C 離開')
+        print(' [*] Waiting for tasks... Press CTRL+C to exit')
         channel.start_consuming()
         
     except Exception as e:
-        print(f"連線失敗: {e}")
-        print("請檢查 Host 防火牆是否開啟 5672，以及 IP 是否正確。")
+        print(f"Connection failed: {e}")
+        print("Please check if Host firewall port 5672 is open, and if the IP is correct.")
 
 if __name__ == '__main__':
     main()

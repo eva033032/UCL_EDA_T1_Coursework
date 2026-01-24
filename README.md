@@ -10,7 +10,7 @@ This project implements a scalable distributed system for protein sequence analy
 
 Ensure `inventory.ini` contains the correct IP addresses.
 
-* **[Host]**: The node hosting RabbitMQ
+* **[Host]**: Configured as `localhost` (since Ansible runs on the node).
 * **[Workers]**: The nodes that will execute the pipeline
 
 ### Step 2: Deploy the Cluster

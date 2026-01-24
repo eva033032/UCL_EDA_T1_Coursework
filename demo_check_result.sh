@@ -1,35 +1,34 @@
 #!/bin/bash
 
-# 1. 設定搜尋關鍵字
+# 1. Set the search keyword
 if [ -z "$1" ]; then
     SEARCH_KEY="ARRD4_MOUSE"
 else
     SEARCH_KEY=$1
 fi
 
-echo "🔍 正在所有 Workers 上搜尋包含 '$SEARCH_KEY' 的數據..."
+echo "🔍 Searching for data containing '$SEARCH_KEY' on all Workers..."
 
-# 2. 執行 Ansible 並捕捉輸出
-# ★★★ 修正重點：移除了 --ignore-errors ★★★
-# 我們改用 2>/dev/null 把 Ansible 的錯誤輸出丟掉，只保留標準輸出
+# 2. Run Ansible and capture the output
+# We use 2>/dev/null to discard Ansible error messages, keeping only standard output
 OUTPUT=$(ansible -i inventory.ini workers -m shell \
     -a "cat /home/almalinux/*${SEARCH_KEY}*parse.out" \
     2>/dev/null)
 
-# 3. 清理雜訊
-# 過濾掉 Ansible 的系統回傳字串，只留下真正的 CSV 內容
+# 3. Filter output
+# Remove Ansible system messages, keeping only the actual CSV content
 CLEAN_DATA=$(echo "$OUTPUT" | grep -v "FAILED" | grep -v "rc=" | grep -v "SUCCESS" | grep -v "CHANGED" | grep -v ">>" | grep -v "No such file")
 
 echo "---------------------------------------------------"
 
-# 4. 智慧判斷
+# 4. Check results
 if [ -n "$CLEAN_DATA" ]; then
-    # 有抓到資料 -> 印出來
+    # Data found -> Print output
     echo "$CLEAN_DATA"
     echo "---------------------------------------------------"
-    echo "🎉 DEMO SUCCESS！ (成功產出 CSV 結果)"
+    echo "🎉 DEMO SUCCESS! (CSV results generated)"
 else
-    # 沒抓到資料 -> 提示等待
-    echo "⏳ 尚未發現結果。"
-    echo "   (可能原因：Worker 還在運算中，請再等 30 秒後重試)"
+    # No data found -> Prompt to wait
+    echo "⏳ No results found yet."
+    echo "   (Possible reason: Workers are still processing. Please wait 30 seconds and try again.)"
 fi
