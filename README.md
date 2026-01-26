@@ -143,8 +143,3 @@ ansible -i inventory.ini workers -m shell -a "grep 'ARRD4_MOUSE' /home/almalinux
 ./demo_check_result.sh
 ansible -i inventory.ini workers -m shell -a "ls -l /home/almalinux/*ARRD4_MOUSE*"
 ```
-7. Note: RabbitMQ CPU usage shows the message broker load, not worker computation. Monitor workers directly for CPU-intensive activity using:
-```bash
-ansible -i inventory.ini workers -m shell -a "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -n 4"
-```
-This gives the real-time worker computation load.
