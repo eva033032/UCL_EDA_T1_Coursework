@@ -15,12 +15,6 @@ The pipeline is designed to be reproducible and fully automated.
 
 ## Phase 1: Infrastructure Setup
 
-### Prerequisites
-
-* WSL (Ubuntu) or any Linux environment
-* Terraform installed
-* Access credentials for your cloud provider (Harvester)
-
 ### Steps
 
 1. Initialize Terraform:
@@ -37,14 +31,9 @@ The pipeline is designed to be reproducible and fully automated.
 
 ## Phase 2: Environment Configuration (Ansible)
 
-### Prerequisites
-
-* SSH access from your local machine to the Host
-* Ansible installed on the Host
-
 ### Steps
 
-1. Copy your SSH private key to Host.
+1. Copy SSH private key to Host.
 2. Test connectivity from Host to Workers:
 
    ```bash
@@ -97,7 +86,7 @@ The pipeline is designed to be reproducible and fully automated.
   ```
 * Optional: Use Netdata or Grafana for visual monitoring.
 
-## Post-processing
+## Phase 4:Post-processing
 
 * After all tasks complete, aggregate results using:
 
@@ -110,7 +99,7 @@ The pipeline is designed to be reproducible and fully automated.
   * `final_profile_output.csv`: average STD and Geometric mean for results
   * `missing_ids.txt`: list of IDs not processed successfully
 
-## File Structure
+## File
 
 * `playbook.yml`: Ansible playbook for Host and Worker setup
 * `producer.py`: Sends protein sequences to RabbitMQ
@@ -121,27 +110,6 @@ The pipeline is designed to be reproducible and fully automated.
 * `select_ids.py`: Utility to select a subset of protein IDs
 * `.gitignore`: Prevents large datasets and temporary files from being uploaded to git
 
-## Dependencies
-
-### Python Packages
-
-* biopython
-* torch
-* numpy
-* scipy
-* pika
-
-### External Tools
-
-* S4Pred: [https://github.com/psipred/s4pred](https://github.com/psipred/s4pred)
-* HH-suite: [https://github.com/soedinglab/hh-suite](https://github.com/soedinglab/hh-suite)
-
-### Databases
-
-* PDB70 for HHSearch: `pdb70_from_mmcif_latest.tar.gz`
-* Mouse proteome FASTA: `UP000000589_10090.fasta`
-* Protein ID list: `experiment_ids.txt`
-
 ## Usage Summary
 
 1. Provision cloud machines with Terraform.
@@ -151,9 +119,3 @@ The pipeline is designed to be reproducible and fully automated.
 5. Run `consumer.py` on Workers.
 6. Monitor progress and queue.
 7. After completion, run `create_final_report.py` to generate results.
-
-## Notes
-
-* Ensure RabbitMQ port (5672) is open in firewall.
-* Host machine is intended for orchestration only; Workers perform the computation.
-* System is scalable to additional Workers or different protein datasets by updating inventory and input files.
