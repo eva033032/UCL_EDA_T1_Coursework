@@ -119,3 +119,32 @@ The pipeline is designed to be reproducible and fully automated.
 5. Run `consumer.py` on Workers.
 6. Monitor progress and queue.
 7. After completion, run `create_final_report.py` to generate results.
+
+## Demo
+
+To test the pipeline with a small dataset:
+
+1. Create `demo_submission.py` and `prepare_demo_file.py`.
+2. Prepare demo input `demo_test.fa` using `prepare_demo_file.py`.
+3. Ensure any previous demo files are removed:
+```bash
+ansible -i inventory.ini workers -m shell -a "rm /home/almalinux/*ARRD4_MOUSE*"
+```
+4. Run the demo submission:
+```bash
+python3 demo_submission.py demo_test.fa
+```
+5. Check if workers are running tasks:
+```bash
+ansible -i inventory.ini workers -m shell -a "grep 'ARRD4_MOUSE' /home/almalinux/consumer.log | tail -n 1"
+```
+6. Final check after one minute:
+```bash
+./demo_check_result.sh
+ansible -i inventory.ini workers -m shell -a "ls -l /home/almalinux/*ARRD4_MOUSE*"
+```
+7. Note: RabbitMQ CPU usage shows the message broker load, not worker computation. Monitor workers directly for CPU-intensive activity using:
+```bash
+ansible -i inventory.ini workers -m shell -a "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -n 4"
+```
+This gives the real-time worker computation load.
