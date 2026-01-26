@@ -1,184 +1,159 @@
-# Distributed Protein Sequence Analysis System (RabbitMQ Version)
+# Distributed Protein Structure Prediction Pipeline
 
-This project implements a scalable distributed system for protein sequence analysis. It utilizes **RabbitMQ** for dynamic task orchestration (load balancing) and **Ansible** for automated cluster deployment.
+## Overview
 
----
+This repository contains a distributed data analysis system for predicting protein structures using the S4Pred and HHSearch machine learning tools. The system distributes workload across a mini-cluster of cloud machines to efficiently process a large set of proteins.
 
-## 1. Installation & Deployment
+The pipeline is designed to be reproducible and fully automated.
 
-### Step 1: Configure Inventory
+## System Architecture
 
-Ensure `inventory.ini` contains the correct IP addresses.
+* **Host Machine:** Manages task distribution via RabbitMQ and runs the producer script.
+* **Worker Machines:** Execute the pipeline scripts on assigned protein sequences, running S4Pred and HHSearch.
+* **Message Queue:** RabbitMQ is used to distribute tasks from Host to Workers.
+* **Data Storage:** Protein data and results are stored centrally for aggregation and reporting.
 
-* **[Host]**: Configured as `localhost` (since Ansible runs on the node).
-* **[Workers]**: The nodes that will execute the pipeline
+## Phase 1: Infrastructure Setup
 
-### Step 2: Deploy the Cluster
+### Prerequisites
 
-Run the playbook to install RabbitMQ, Python dependencies, and HHSuite on all nodes.
+* WSL (Ubuntu) or any Linux environment
+* Terraform installed
+* Access credentials for your cloud provider (Harvester)
 
-```
-ansible-playbook -i inventory.ini playbook.yml
-```
+### Steps
 
-*(Optional) Install Netdata monitoring:*
+1. Initialize Terraform:
 
-```
-ansible-playbook -i inventory.ini install_netdata.yml
-```
----
-## 2. Demo
+   ```bash
+   terraform init
+   ```
+2. Apply Terraform to create machines:
 
-Use these scripts to verify the pipeline functionality with a single sequence (`demo_test.fa`) before running the full experiment.
+   ```bash
+   terraform apply
+   ```
+3. After completion, generate `inventory.ini` using `generate_inventory.py` to populate IPs of Host and Workers.
 
-### Step 0: Pre-Demo Preparation (Prove Idempotency)
-Before starting, we remove any existing result files for the demo protein (`ARRD4_MOUSE`) from all workers.
-```
-ansible -i inventory.ini workers -m shell -a "rm /home/almalinux/*ARRD4_MOUSE*"
-```
+## Phase 2: Environment Configuration (Ansible)
 
-### Step 1: Submit the Demo Task
+### Prerequisites
 
-Reads `demo_test.fa` and pushes it to the RabbitMQ queue.
+* SSH access from your local machine to the Host
+* Ansible installed on the Host
 
-```
-python3 demo_submission.py demo_test.fa
-```
+### Steps
 
-### Step 2: Processing
+1. Copy your SSH private key to Host.
+2. Test connectivity from Host to Workers:
 
-Workers will pick up the task. Check the RabbitMQ Management UI or wait approximately **45–60 seconds**.
-```
-# Check who is currently running the job (Look for [Running] status)
-ansible -i inventory.ini workers -m shell -a "grep 'ARRD4_MOUSE' /home/almalinux/consumer.log | tail -n 1"
-```
+   ```bash
+   ansible -i inventory.ini workers -m ping
+   ```
+3. Run the Ansible playbook to install dependencies, Python, S4Pred, HH-suite, and pipeline scripts:
 
-### Step 3: Verify Results
+   ```bash
+   ansible-playbook -i inventory.ini playbook.yml
+   ```
+4. Verify that S4Pred weights and HH-suite database have been downloaded and compiled.
 
-Query the workers to confirm task completion and view the result.
+## Phase 3: Distributed Execution
 
-```
-./demo_check_result.sh
-```
+### Producer (Host)
 
-We can also check whether the output file exists on workers.
-```
-ansible -i inventory.ini workers -m shell -a "ls -l /home/almalinux/*ARRD4_MOUSE*"
-```
+* Sends protein sequences to RabbitMQ queue.
+* Run the producer script on Host:
 
----
+  ```bash
+  python3 producer.py
+  ```
+* Input files:
 
-## 3. Running the Full Experiment
+  * `experiment_ids.txt` (list of protein IDs)
+  * `UP000000589_10090.fasta` (protein sequences)
 
-To process the full dataset (`UP000000589_10090.fasta`):
+### Consumer (Workers)
 
-### Phase 1: Produce Tasks
+* Pull tasks from RabbitMQ and run pipeline on each sequence.
+* Run the consumer script on each Worker:
 
-Run the producer to read the dataset and publish tasks to the queue.
+  ```bash
+  python3 consumer.py
+  ```
 
-```
-python3 producer.py
-```
+### Monitoring
 
-### Phase 2: Monitor
+* Use the following commands on Host to monitor progress:
 
-Monitor progress via the **RabbitMQ Management Interface (Port 15672 - [http://localhost:15672/#/](http://localhost:15672/#/))**.
+  ```bash
+  # Check running consumers
+  ansible -i inventory.ini workers -m shell -a "ps -ef | grep consumer.py | grep -v grep"
 
-In addition to the web UI, the following CLI-based monitoring checks are used to verify system health and runtime progress:
-```
-# Check whether consumer.py processes are running on workers
-ansible -i inventory.ini workers -m shell -a "ps -ef | grep consumer.py | grep -v grep"
+  # Check RabbitMQ queue
+  sudo rabbitmqctl list_queues name messages_ready messages_unacknowledged
 
+  # Check recent logs
+  ansible -i inventory.ini workers -m shell -a "tail -n 5 /home/almalinux/consumer.log"
+  ```
+* Optional: Use Netdata or Grafana for visual monitoring.
 
-# Check RabbitMQ queue status (ready & unacknowledged messages)
-sudo rabbitmqctl list_queues name messages_ready messages_unacknowledged
+## Post-processing
 
+* After all tasks complete, aggregate results using:
 
-# Inspect the last 5 lines of consumer logs to confirm activity
-ansible -i inventory.ini workers -m shell -a "tail -n 5 /home/almalinux/consumer.log"
+  ```bash
+  python3 create_final_report.py
+  ```
+* This script generates:
 
+  * `final_hits_output.csv`: protein IDs and best HHSearch hits
+  * `final_profile_output.csv`: average STD and Geometric mean for results
+  * `missing_ids.txt`: list of IDs not processed successfully
 
-# Search logs for runtime errors or exceptions
-ansible -i inventory.ini workers -m shell -a "grep -i 'Error' /home/almalinux/consumer.log | tail -n 5"
+## File Structure
 
+* `playbook.yml`: Ansible playbook for Host and Worker setup
+* `producer.py`: Sends protein sequences to RabbitMQ
+* `consumer.py`: Worker script to process sequences
+* `pipeline_script.py`: Executes the S4Pred and HHSearch pipeline
+* `results_parser.py`: Parses HHSearch output
+* `create_final_report.py`: Aggregates results into CSV files
+* `select_ids.py`: Utility to select a subset of protein IDs
+* `.gitignore`: Prevents large datasets and temporary files from being uploaded to git
 
-# Verify successful output generation (CSV-formatted lines)
-ansible -i inventory.ini workers -m shell -a "grep ',' /home/almalinux/*.out | head -n 3"
-```
+## Dependencies
 
-### Phase 3: Batch Collection & Reporting
+### Python Packages
 
-Once the queue is empty, collect the results using Ansible (batch strategy) and generate the report.
+* biopython
+* torch
+* numpy
+* scipy
+* pika
 
-#### 1. Archive & Fetch Results (via Ansible)
+### External Tools
 
-Compress output files on all workers and fetch them to `collected_results/` on the manager node.
+* S4Pred: [https://github.com/psipred/s4pred](https://github.com/psipred/s4pred)
+* HH-suite: [https://github.com/soedinglab/hh-suite](https://github.com/soedinglab/hh-suite)
 
-```
-ansible -i inventory.ini workers -m shell -a "tar -czf /home/almalinux/results.tar.gz /home/almalinux/*.out"
+### Databases
 
-ansible -i inventory.ini workers -m fetch -a "src=/home/almalinux/results.tar.gz dest=./collected_results/"
-```
+* PDB70 for HHSearch: `pdb70_from_mmcif_latest.tar.gz`
+* Mouse proteome FASTA: `UP000000589_10090.fasta`
+* Protein ID list: `experiment_ids.txt`
 
-#### 2. Generate Final Report
+## Usage Summary
 
-Unzip the data and calculate statistics (filtering out NaN values).
+1. Provision cloud machines with Terraform.
+2. Configure environment with Ansible.
+3. Upload input FASTA and ID files to Host.
+4. Run `producer.py` on Host.
+5. Run `consumer.py` on Workers.
+6. Monitor progress and queue.
+7. After completion, run `create_final_report.py` to generate results.
 
-```
-mkdir -p final_data
+## Notes
 
-for file in collected_results/*/home/almalinux/results.tar.gz; do tar -xzf "$file" -C final_data/; done
-
-mv final_data/home/almalinux/*.out final_data/ 2>/dev/null
-
-python3 create_final_report.py
-```
-
-*Outputs:*
-
-* `final_hits_output.csv`
-* `final_profile_output.csv`
-* `missing_ids.txt`
-
----
-
-## 4. File Structure Overview
-
-### Active System Logic (RabbitMQ Core)
-
-* `producer.py`: Reads FASTA files and publishes tasks to the queue.
-* `consumer.py`: Runs on workers; listens to the queue and executes the pipeline.
-* `pipeline_script.py`: Wrapper script that orchestrates HHSearch and S4Pred.
-* `results_parser.py`: Helper library to parse HHSearch raw text output into CSV format.
-* `select_ids.py`: Helper script to filter specific protein IDs from the large dataset.
-
-### Data Processing & Reporting
-
-* `UP000000589_10090.fasta`: The main input dataset.
-* `experiment_ids.txt`: List of target IDs used to verify completeness.
-* `create_final_report.py`: The main reporting script. Aggregates results, filters NaNs, and generates CSVs.
-* `final_hits_output.csv`: Final consolidated results (ID & Best Hit).
-* `final_profile_output.csv`: Final statistical profile (Average Std / GMean).
-* `missing_ids.txt`: Generated by the report script; logs any tasks that failed or are missing.
-
-### Infrastructure & Automation
-
-* `playbook.yml`: Main Ansible playbook for system deployment (RabbitMQ, Python, HHSuite).
-* `inventory.ini`: Ansible hosts file defining Manager and Worker nodes.
-
-### Live Demo Files
-
-* `prepare_demo_file.py`: Script used to generate `demo_test.fa` from the main dataset.
-* `demo_submission.py`: Submits a single job for the Viva demonstration.
-* `demo_check_result.sh`: Shell script to check results on workers via Ansible.
-* `demo_test.fa`: A small FASTA file used specifically for the demo.
-
-### Runtime Directories
-
-* `final_data/`: Directory where all `.out` files are extracted for analysis.
-* `collected_results/`: Directory where Ansible stores the fetched `.tar.gz` files from workers.
-
-### Other
-* `install_netdata.yml`: Playbook for installing Netdata monitoring agent.
-* `test-authorized-keys.sh`: Script to verify SSH connectivity across the cluster.
-* `lecturer_key.pub`: Public key for lecturer access.
+* Ensure RabbitMQ port (5672) is open in firewall.
+* Host machine is intended for orchestration only; Workers perform the computation.
+* System is scalable to additional Workers or different protein datasets by updating inventory and input files.
