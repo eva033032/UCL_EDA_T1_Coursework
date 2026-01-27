@@ -1,24 +1,23 @@
 ---
 # ====================================================
-# Part 1: Host Configuration (RabbitMQ Server + Producer Environment)
+# Part 1: Host Configuration (RabbitMQ + Web Server + Monitoring Hub)
 # ====================================================
-- name: Setup Host Machine (RabbitMQ Server)
+- name: Setup Host Machine (RabbitMQ Server & Monitoring)
   hosts: host
   become: yes
   tasks:
-    # --- Install EPEL (Extra Packages) ---
-    - name: 0. Install EPEL Release (Basic Requirement)
+    # --- Install EPEL ---
+    - name: 0. Install EPEL Release
       dnf:
         name: epel-release
         state: present
 
-    # --- Setup Erlang Repository (RabbitMQ is written in Erlang, this is a dependency) ---
+    # --- RabbitMQ Setup ---
     - name: 1. Setup Erlang Repository
       shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/erlang/script.rpm.sh | bash"
       args:
-        creates: /etc/yum.repos.d/rabbitmq_erlang.repo # Do not execute again if the file already exists
+        creates: /etc/yum.repos.d/rabbitmq_erlang.repo
 
-    # --- Setup RabbitMQ Repository ---
     - name: 2. Setup RabbitMQ Repository
       shell: "curl -s https://packagecloud.io/install/repositories/rabbitmq/rabbitmq-server/script.rpm.sh | bash"
       args:
@@ -34,16 +33,13 @@
         name: rabbitmq-server
         state: started
         enabled: yes
-    # ==========================================
-    # Install Python Firewall Module
-    # ==========================================
+
+    # --- Firewall ---
     - name: 4.5 Install Python Firewall Library
       dnf:
         name: python3-firewall
         state: present
-    # ==========================================
-    # Install and Start Firewalld Service
-    # ==========================================
+
     - name: 4.6 Install Firewalld Service
       dnf:
         name: firewalld
@@ -54,7 +50,7 @@
         name: firewalld
         state: started
         enabled: yes
-    # ==========================================
+
     - name: 5. Open Firewall for RabbitMQ (Port 5672)
       firewalld:
         port: 5672/tcp
@@ -62,7 +58,7 @@
         state: enabled
         immediate: yes
     
-    # Ensure Host has Python, pip, and git installed, otherwise pika installation will fail
+    # --- Python Setup ---
     - name: 6. Install Python/Pip on Host
       dnf:
         name: 
@@ -71,25 +67,162 @@
           - git 
         state: present
 
-    - name: 7. Install Pika (Python Client for Producer)
+    - name: 7. Install Pika (Python Client)
       pip:
         name: pika
         state: present
 
-    - name: 8. Add Lecturer's SSH Key to Host
+    - name: 8. Add Lecturer's SSH Key
       authorized_key:
         user: almalinux
         state: present
         key: "{{ lookup('file', 'lecturer_key.pub') }}"
 
+    # ==========================================
+    # Web Server for Results
+    # ==========================================
+    - name: 9. Install Flask
+      pip:
+        name: flask
+        state: present
+
+    - name: 10. Open Port 5000 for Web Server
+      firewalld:
+        port: 5000/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: 11. Ensure Coursework Directory Exists
+      file:
+        path: /home/almalinux/coursework
+        state: directory
+        mode: '0755'
+
+    - name: 12. Deploy Result Server Script
+      copy:
+        src: result_server.py
+        dest: /home/almalinux/coursework/result_server.py
+        mode: '0755'
+
+    - name: 13. Start Web Server (Background)
+      shell: |
+        cd /home/almalinux/coursework
+        pkill -f result_server.py || true
+        nohup python3 result_server.py > web_server.log 2>&1 &
+      async: 10
+      poll: 0
+
+    # ==========================================
+    # Monitoring Stack (Prometheus + Grafana)
+    # ==========================================
+    - name: 14. Add Grafana Repository
+      copy:
+        dest: /etc/yum.repos.d/grafana.repo
+        content: |
+          [grafana]
+          name=grafana
+          baseurl=https://rpm.grafana.com
+          repo_gpgcheck=1
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://rpm.grafana.com/gpg.key
+          sslverify=1
+          sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+
+    - name: 15. Install Grafana
+      dnf:
+        name: grafana
+        state: present
+
+    - name: 16. Start and Enable Grafana
+      service:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    - name: 17. Open Firewall for Grafana (Port 3000)
+      firewalld:
+        port: 3000/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: 18. Download Prometheus
+      unarchive:
+        src: https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz
+        dest: /opt/
+        remote_src: yes
+    
+    - name: 19. Rename Prometheus Directory
+      shell: mv /opt/prometheus-2.45.0.linux-amd64 /opt/prometheus
+      args:
+        creates: /opt/prometheus
+
+    - name: 20. Create Prometheus Systemd Service
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/prometheus/prometheus --config.file=/opt/prometheus/prometheus.yml --storage.tsdb.path=/opt/prometheus/data
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # --- Dynamic Configuration for 100% Reproducibility ---
+    - name: 20.5 Configure Prometheus Targets (Dynamic)
+      copy:
+        dest: /opt/prometheus/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 15s
+          scrape_configs:
+            - job_name: "prometheus"
+              static_configs:
+                - targets: ["localhost:9090"]
+            - job_name: "workers"
+              static_configs:
+                - targets:
+                  {% for host in groups['workers'] %}
+                  - '{{ host }}:9100'
+                  {% endfor %}
+      notify: Restart Prometheus
+
+    - name: 21. Start and Enable Prometheus
+      service:
+        name: prometheus
+        state: started
+        enabled: yes
+
+    - name: 22. Open Firewall for Prometheus (Port 9090)
+      firewalld:
+        port: 9090/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+  handlers:
+    - name: Restart Prometheus
+      service:
+        name: prometheus
+        state: restarted
+
 # ====================================================
-# Part 2: Workers Configuration (Your Original Logic + Pika)
+# Part 2: Workers Configuration (Analysis + Node Exporter)
 # ====================================================
 - name: Setup Worker Nodes for Coursework
   hosts: workers
   become: yes
   tasks:
-    - name: 1. Install System Dependencies (Crucial for Compilation)
+    # --- Cleaned up: Removed Netdata fix tasks as per request ---
+
+    - name: 1. Install System Dependencies
       dnf:
         name:
           - git
@@ -99,9 +232,18 @@
           - gcc-c++
           - cmake
           - zlib-devel
+          - python3-firewall # Added for firewall module
+          - firewalld       # Ensure firewalld is installed
         state: present
+        update_cache: yes
 
-    - name: 2. Install Python Libraries (Added pika)
+    - name: 1.1 Ensure Firewalld is Running
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: 2. Install Python Libraries
       pip:
         name:
           - biopython
@@ -134,8 +276,8 @@
         src: /opt/tools/s4pred/weights.tar.gz
         dest: /opt/tools/s4pred/
         remote_src: yes
-    # ---------------------
 
+    # --- HH-suite Source Code ---
     - name: 5. Install HH-suite Code
       git:
         repo: 'https://github.com/soedinglab/hh-suite.git'
@@ -155,6 +297,7 @@
         mode: '0777'
         recurse: yes
 
+    # --- PDB70 ---
     - name: 8. Download PDB70 Database (Skip if exists)
       shell: "nohup wget -O /data/pdb70/pdb70_from_mmcif_latest.tar.gz https://wwwuser.gwdg.de/~compbiol/data/hhsuite/databases/hhsuite_dbs/pdb70_from_mmcif_latest.tar.gz > /data/pdb70/download.log 2>&1 &"
       async: 10
@@ -162,8 +305,8 @@
       args:
         creates: /data/pdb70/pdb70_from_mmcif_latest.tar.gz
 
-    # --- HH-suite ---
-    - name: 9. Compile HH-suite (Build and Install)
+    # --- HH-suite Compilation ---
+    - name: 9. Compile HH-suite
       shell: |
         cd /opt/tools/hh-suite
         rm -rf build
@@ -173,7 +316,7 @@
         make -j 2
         make install
       args:
-        creates: /opt/tools/hh-suite/build/bin/hhsearch # Avoid recompilation to save time
+        creates: /opt/tools/hh-suite/build/bin/hhsearch
 
     - name: 10. Deploy Pipeline Scripts and Data
       copy:
@@ -183,4 +326,57 @@
       loop:
         - pipeline_script.py
         - results_parser.py
+        - consumer.py
         - pipeline_example/test.fa
+
+    # ==========================================
+    # Monitoring Agent (Node Exporter)
+    # ==========================================
+    - name: 11. Create Metrics Directory (For Custom Python Metrics)
+      file:
+        path: /home/almalinux/node_exporter_metrics
+        state: directory
+        mode: '0755'
+        owner: almalinux
+        group: almalinux
+
+    - name: 12. Download Node Exporter
+      unarchive:
+        src: https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+        dest: /opt/
+        remote_src: yes
+
+    - name: 13. Rename Node Exporter Directory
+      shell: mv /opt/node_exporter-1.6.1.linux-amd64 /opt/node_exporter
+      args:
+        creates: /opt/node_exporter
+
+    # The --collector.textfile.directory flag is crucial; it corresponds to the consumer.py settings
+    - name: 14. Create Node Exporter Service (With Textfile Collector)
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/node_exporter/node_exporter --collector.textfile.directory=/home/almalinux/node_exporter_metrics
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: 15. Start and Enable Node Exporter
+      service:
+        name: node_exporter
+        state: started
+        enabled: yes
+
+    - name: 16. Open Firewall for Node Exporter (Port 9100)
+      firewalld:
+        port: 9100/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes

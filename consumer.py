@@ -10,28 +10,62 @@ import time
 HOST_IP = '10.134.12.209'
 QUEUE_NAME = 'task_queue'
 PIPELINE_SCRIPT = '/home/almalinux/pipeline_script.py'
+
+# Metric file path for Monitoring
+# Node Exporter will read this file to display graphs in Grafana
+METRICS_DIR = '/home/almalinux/node_exporter_metrics'
+METRICS_FILE = os.path.join(METRICS_DIR, 'bio_tasks.prom')
 # ==========================================
+
+def update_metrics():
+    """
+    Custom Metric Function
+    Counts the number of .out files and writes to a .prom file for Prometheus.
+    """
+    try:
+        # Ensure the directory exists
+        os.makedirs(METRICS_DIR, exist_ok=True)
+        
+        # Count how many output files exist in the current directory
+        # This represents the "Task Completed" count
+        count = len([name for name in os.listdir('.') if name.endswith('.out')])
+        
+        # Write to the .prom file following Prometheus syntax
+        with open(METRICS_FILE, "w") as f:
+            f.write("# HELP bio_tasks_processed_total Total number of protein sequences processed\n")
+            f.write("# TYPE bio_tasks_processed_total gauge\n")
+            f.write(f"bio_tasks_processed_total {count}\n")
+            
+    except Exception as e:
+        print(f" [Warning] Failed to update metrics: {e}")
 
 def run_pipeline(protein_id, sequence):
     """
     Write a single protein to a temp file, call the pipeline, and save the results.
     """
-    # 1. Create temporary file
-    temp_filename = f"job_{protein_id}.fa"
-    safe_filename = temp_filename.replace('|', '_')
-    
-    # Create output filename (Important! Each ID needs a unique file to avoid overwriting)
-    # We replace '|' with '_' to avoid filename errors
+    # Create output filename
     safe_id = protein_id.replace('|', '_')
     output_filename = f"{safe_id}.out"
 
-    with open(safe_filename, "w") as f:
+    # ==========================================
+    # Fault Tolerance / Idempotency Check
+    # ==========================================
+    # If the result file already exists, we assume the task was finished previously.
+    # We skip execution to save resources and allow "Resume" functionality.
+    if os.path.exists(output_filename):
+        print(f" [Skipped] Result already exists for: {protein_id}")
+        # Even if we skip, we must return normally so RabbitMQ can Ack the message.
+        return
+
+    # 1. Create temporary file
+    temp_filename = f"job_{safe_id}.fa"
+    with open(temp_filename, "w") as f:
         f.write(f">{protein_id}\n{sequence}\n")
     
     print(f" [Running] Processing protein: {protein_id}")
 
     # 2. Call external command
-    cmd = ["python3", PIPELINE_SCRIPT, safe_filename]
+    cmd = ["python3", PIPELINE_SCRIPT, temp_filename] # Fixed typo: passed temp_filename instead of safe_filename
     
     try:
         # Execute and capture output
@@ -43,15 +77,17 @@ def run_pipeline(protein_id, sequence):
                 f.write(result.stdout)
                 
         # If the pipeline produces a fixed filename (e.g., hhr_parse.out), rename it
-        # (Double insurance here)
         elif os.path.exists("hhr_parse.out"):
              os.rename("hhr_parse.out", output_filename)
 
         print(f" [Done] Successfully generated: {output_filename}")
         
+        # Update Monitoring Metrics after success
+        update_metrics()
+        
         # 3. Clean up temporary file
-        if os.path.exists(safe_filename):
-            os.remove(safe_filename)
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
             
     except subprocess.CalledProcessError as e:
         print(f" [Error] Failed: {protein_id}")
@@ -65,11 +101,15 @@ def callback(ch, method, properties, body):
     run_pipeline(data['id'], data['sequence'])
     
     # Key: Tell RabbitMQ "I'm done, you can delete this message now"
+    # Even if we skipped the task (because file exists), we MUST Ack it.
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def main():
     print(f" [*] Connecting to Host ({HOST_IP})...")
     
+    # Ensure metric directory exists on startup
+    os.makedirs(METRICS_DIR, exist_ok=True)
+
     try:
         # Add username/password authentication
         credentials = pika.PlainCredentials('admin', 'admin123')
@@ -80,8 +120,6 @@ def main():
         channel.queue_declare(queue=QUEUE_NAME, durable=True)
 
         # Key optimization: Load balancing
-        # prefetch_count=1 means "Don't give me the next one until I finish this one"
-        # This ensures Load Average doesn't spike, and work is distributed to idle Workers
         channel.basic_qos(prefetch_count=1)
 
         channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback)
