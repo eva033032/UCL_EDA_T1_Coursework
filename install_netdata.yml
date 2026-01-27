@@ -1,9 +1,0 @@
----
-- name: Install Netdata on Workers
-  hosts: workers
-  become: yes
-  tasks:
-    - name: Download and install Netdata
-      shell: "curl -L https://my-netdata.io/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --non-interactive --stable-channel"
-      args:
-        creates: /usr/sbin/netdata
