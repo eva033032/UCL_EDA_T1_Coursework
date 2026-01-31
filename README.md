@@ -23,7 +23,7 @@ graph TD
     subgraph Infrastructure [1. Infrastructure]
         direction TB
         Terraform(Terraform):::infra
-        VMs[5 VMs<br/>1 Host & 4 Workers]:::infra
+        VMs[5 VMs<br/>1 Host + 4 Workers]:::infra
         Inventory(inventory.ini):::file
         
         Terraform -- Generates --> VMs
