@@ -8,23 +8,78 @@ The pipeline is designed to be **reproducible**, **fault-tolerant**, and feature
 
 ## System Architecture
 
-* **Host Machine:**
-  * **Orchestrator:** Manages the RabbitMQ message broker.
-  * **Monitoring Hub:** Hosts Prometheus & Grafana.
-  * **Result Server:** Runs a Flask Web Server for easy data retrieval.
-  * **Producer:** Splits FASTA files and dispatches tasks.
+Here is the diagram of distributed system:
 
-* **Worker Machines:**
-  * **Execution:** Run the `consumer.py` agent to process tasks.
-  * **Compute:** Execute `pipeline_script.py` (S4Pred + HHSearch) locally.
-  * **Observability:** Run Node Exporter to report CPU and custom task metrics.
+```mermaid
+graph TD
+    %% 
+    classDef script fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;
+    classDef file fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef infra fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef db fill:#e0f2f1,stroke:#00695c,stroke-width:2px,shape:cylinder;
+    classDef monitor fill:#ffebee,stroke:#c62828,stroke-width:2px;
 
-* **Communication:** RabbitMQ is used for asynchronous task distribution.
-* **Storage strategy:**
-  * **Input:** Stored centrally on Host.
-  * **Processing:** Temp files created locally on Workers.
-  * **Output:** Results (`.out`) persist on Workers until aggregated.
+    %% 1. 
+    subgraph Infrastructure [1. Infrastructure]
+        direction TB
+        Terraform(Terraform):::infra
+        VMs[5 VMs<br/>1 Host & 4 Workers]:::infra
+        Inventory(inventory.ini):::file
+        
+        Terraform -- Generates --> VMs
+        Terraform -- Extract IPs --> Inventory
+    end
 
+    %% 2. 
+    subgraph Orchestration [2. Orchestration]
+        direction TB
+        InputFile(fasta &<br/>experiment_ids.txt):::file
+        Producer(Host producer.py):::script
+        RabbitMQ((RabbitMQ)):::db
+        Consumer(Workers consumer.py):::script
+
+        InputFile -- Read by --> Producer
+        Producer -- Sends Tasks --> RabbitMQ
+        RabbitMQ -- Distributes --> Consumer
+    end
+
+    %% 
+    Inventory -. Configures .-> Producer
+    Inventory -. Configures .-> Consumer
+
+    %% 3. 
+    subgraph Comp_Monitor [3. Computation & Monitoring]
+        direction TB
+        Grafana(Grafana Dashboard):::monitor
+        Pipeline(pipeline_script.py):::script
+        ResultsParser(results_parser.py):::script
+        OutFiles(out Files on Workers):::file
+
+        Consumer -. Updates Metrics .-> Grafana
+        Consumer -- Calls --> Pipeline
+        Pipeline -- Calls --> ResultsParser
+        Pipeline -- Generates --> OutFiles
+    end
+
+    %% 4. 
+    subgraph Aggregation [4. Aggregation]
+        direction TB
+        FinalReport(Host create_final_report.py):::script
+        FinalCSV(final_hits_output.csv):::file
+        WebServer(Web Server<br/>result_server.py):::infra
+
+        FinalReport -- Generates --> FinalCSV
+        FinalCSV -- Download via --> WebServer
+    end
+
+    %%  (Fetch Result)
+    OutFiles -- Ansible Fetch --> FinalReport
+
+    style Infrastructure fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
+    style Orchestration fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
+    style Comp_Monitor fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
+    style Aggregation fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
+```
 ---
 
 ## Phase 1: Infrastructure Provisioning (Terraform)
@@ -51,12 +106,12 @@ python3 generate_inventory.py
 
 This phase automates the setup of software, transfers python scripts, and configures monitoring.
 
-### 1. **Test Connectivity:**
+### 1. Test Connectivity:
 ```bash
 ansible -i inventory.ini workers -m ping
 ```
 
-### 2. **Run the Playbook:**
+### 2. Run the Playbook:
 ```bash
 ansible -i inventory.ini playbook.yml
 ```
@@ -85,7 +140,6 @@ ansible -i inventory.ini workers -m shell -a "nohup python3 -u /home/almalinux/c
 
 SSH into the Host and launch the producer to populate the queue.
 ```bash
-ssh almalinux@10.134.12.209
 python3 producer.py
 ```
 The producer reads the target list from experiment_ids.txt and scans the UP000000589_10090.fasta dataset. It filters out only the matching protein sequences and dispatches them to the RabbitMQ task_queue.
@@ -96,7 +150,7 @@ The producer reads the target list from experiment_ids.txt and scans the UP00000
 
 While the pipeline runs, monitor the cluster status in real-time.
 
-* **URL:** `http://localhost:3000`
+* **URL:** `http://<Host-IP>:3000`
 * **Credentials:** `admin` / `admin`
 * **Dashboard:** Import the provided Grafana.json file to view
 
@@ -104,7 +158,7 @@ While the pipeline runs, monitor the cluster status in real-time.
 
 ## Phase 5: Result Aggregation & Reporting
 
-Since the analysis results (`.out` files) are distributed across the worker nodes, they must be fetched back to a central location for aggregation.
+Since the analysis results (`.out` files) are distributed across the worker nodes, they must be fetched back to the host for aggregation.
 
 ### 1. Fetch Results from Workers
 Since Ansible's fetch module does not support wildcards efficiently, we first compress the results on the workers, fetch the archives, and then extract them.
@@ -132,9 +186,19 @@ Run the reporting script to parse the collected files, filter out errors (NaN), 
 python3 create_final_report.py
 ```
 
+### 3. Start Web Server & Download Results
+Start the Flask server to host the generated CSV files.
+
+```bash
+python3 result_server.py
+```
+Open browser and go to http://<HOST_IP>:5000
+Click the links to download final_hits_output.csv or final_profile_output.csv.
+
+
 **Outputs:**
 * `final_hits_output.csv`: Best hit for each protein.
-* `final_profile_output.csv`: Statistical summary (Mean/STD).
+* `final_profile_output.csv`: Statistical summary.
 * `missing_ids.txt`: List of failed or missing sequences.
 
 ## File Descriptions
@@ -143,7 +207,6 @@ python3 create_final_report.py
   * `main.tf`, `variables.tf`: Terraform definitions.
   * `playbook.yml`: Main Ansible configuration.
   * `inventory.ini`: Generated list of IP addresses.
-  * `reset_demo.sh`: Script to clean state and restart workers (Idempotency helper).
 
 * **Application Logic**
   * `producer.py`: Reads FASTA, sends JSON payloads to RabbitMQ.
@@ -157,4 +220,7 @@ python3 create_final_report.py
 
 * **Monitoring**
   * `Grafana.json`: Dashboard configuration.
+
+* **Other**
+  * `reset_demo.sh`: Script to clean state and restart workers.
 
