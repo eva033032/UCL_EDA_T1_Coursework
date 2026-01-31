@@ -1,22 +1,41 @@
-# --- 1. Folders ---
-build_cluster/
-collected_results/
-final_data/
-coursework_example_output/
-pipeline_example/
+# =======================================================
+# 1. Default: Ignore EVERYTHING
+# =======================================================
+*
+
+# =======================================================
+# 2. Exception: Allow all directories
+# =======================================================
+!*/
+
+# =======================================================
+# 3. Exception: Allow specific file extensions
+# =======================================================
+!*.yml
+!*.yaml
+!*.py
+!*.tf
+!*.txt
+!*.csv
+!*.json
+!*.ini
+!*.pub
+!*.md
+!*.sh
+
+# =======================================================
+# 4. Exception: Allow specific config files
+# =======================================================
+!.gitignore
+
+# =======================================================
+# 5. Security Guard (Safety Net)
+# =======================================================
+terraform.tfstate
+terraform.tfstate.backup
+*.log
+*.out
+*.tar.gz
 __pycache__/
 .terraform/
-
-# --- 2. Large Files---
-*.fasta
-*.fa
-*.tar.gz
-*.gz
-*.zip
-*.out
-*.log
-*.iso
-
-# --- 3. System Junk ---
-._*
 .DS_Store

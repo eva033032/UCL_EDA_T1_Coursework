@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Config
+clusters:
+- name: "sl-p02"
+  cluster:
+    server: "https://rancher.condenser.arc.ucl.ac.uk/k8s/clusters/c-b5dbc"
+
+users:
+- name: "sl-p02"
+  user:
+    token: "kubeconfig-u-moobtgzd6dqqgqr:ks6xc7kwwh9rbbv95r4jph2lg8gldflz7zj6k2gmjjh5wzdnth254s"
+
+
+contexts:
+- name: "sl-p02"
+  context:
+    user: "sl-p02"
+    cluster: "sl-p02"
+
+current-context: "sl-p02"
