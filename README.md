@@ -29,17 +29,17 @@ The pipeline is designed to be **reproducible**, **fault-tolerant**, and feature
 
 ## Phase 1: Infrastructure Provisioning (Terraform)
 
-1. Initialize Terraform:
+### 1. Initialize Terraform:
 ```bash
 terraform init
 ```
 
-2. Provision the cluster (1 Host, 4 Workers):
+### 2. Provision the cluster (1 Host, 4 Workers):
 ```bash
 terraform apply
 ```
 
-3. Generate the Ansible inventory file:
+### 3. Generate the Ansible inventory file:
 * This script extracts IPs from Terraform output and creates `inventory.ini`.
 ```bash
 python3 generate_inventory.py
@@ -51,12 +51,12 @@ python3 generate_inventory.py
 
 This phase automates the setup of software, transfers python scripts, and configures monitoring.
 
-1. **Test Connectivity:**
+### 1. **Test Connectivity:**
 ```bash
 ansible -i inventory.ini workers -m ping
 ```
 
-2. **Run the Playbook:**
+### 2. **Run the Playbook:**
 ```bash
 ansible -i inventory.ini playbook.yml
 ```
@@ -98,7 +98,7 @@ While the pipeline runs, monitor the cluster status in real-time.
 
 * **URL:** `http://localhost:3000`
 * **Credentials:** `admin` / `admin`
-* **Dashboard:** Can directly import the provided `Grafana.json` file into Grafana to view
+* **Dashboard:** Import the provided Grafana.json file to view
 
 ---
 
