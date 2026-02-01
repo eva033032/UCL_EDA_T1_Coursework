@@ -12,25 +12,27 @@ Here is the diagram of distributed system:
 
 ```mermaid
 graph TD
-    %% 
+    %% Define Styles
     classDef script fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;
     classDef file fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5;
     classDef infra fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
     classDef db fill:#e0f2f1,stroke:#00695c,stroke-width:2px,shape:cylinder;
     classDef monitor fill:#ffebee,stroke:#c62828,stroke-width:2px;
 
-    %% 1. 
-    subgraph Infrastructure [1. Infrastructure]
+    %% 1. Infrastructure Layer
+    subgraph Infrastructure [1. Infrastructure & Configuration]
         direction TB
         Terraform(Terraform):::infra
-        VMs[5 VMs<br/>1 Host + 4 Workers]:::infra
+        VMs[5 VMs<br/>1 Host & 4 Workers]:::infra
         Inventory(inventory.ini):::file
+        Playbook(playbook.yml):::file
         
         Terraform -- Generates --> VMs
         Terraform -- Extract IPs --> Inventory
+        Inventory --- Playbook
     end
 
-    %% 2. 
+    %% 2. Orchestration Layer
     subgraph Orchestration [2. Orchestration]
         direction TB
         InputFile(fasta &<br/>experiment_ids.txt):::file
@@ -43,11 +45,12 @@ graph TD
         RabbitMQ -- Distributes --> Consumer
     end
 
-    %% 
-    Inventory -. Configures .-> Producer
-    Inventory -. Configures .-> Consumer
+    %% Configuration connections (Ansible)
+    Playbook -. Ansible Deploy .-> Producer
+    Playbook -. Ansible Deploy .-> Consumer
+    Playbook -. Ansible Deploy .-> RabbitMQ
 
-    %% 3. 
+    %% 3. Computation & Monitoring Layer
     subgraph Comp_Monitor [3. Computation & Monitoring]
         direction TB
         Grafana(Grafana Dashboard):::monitor
@@ -61,20 +64,21 @@ graph TD
         Pipeline -- Generates --> OutFiles
     end
 
-    %% 4. 
+    %% 4. Aggregation Layer
     subgraph Aggregation [4. Aggregation]
         direction TB
         FinalReport(Host create_final_report.py):::script
-        FinalCSV(CSV Files):::file
+        FinalCSV(final_hits_output.csv):::file
         WebServer(Web Server<br/>result_server.py):::infra
 
         FinalReport -- Generates --> FinalCSV
         FinalCSV -- Download via --> WebServer
     end
 
-    %%  (Fetch Result)
+    %% Fetch connection
     OutFiles -- Ansible Fetch --> FinalReport
 
+    %% Styling
     style Infrastructure fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
     style Orchestration fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
     style Comp_Monitor fill:#f9f9f9,stroke:#666,stroke-width:1px,color:#333
