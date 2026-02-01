@@ -68,7 +68,7 @@ graph TD
     subgraph Aggregation [4. Aggregation]
         direction TB
         FinalReport(Host create_final_report.py):::script
-        FinalCSV(final_hits_output.csv):::file
+        FinalCSV(CSV Files):::file
         WebServer(Web Server<br/>result_server.py):::infra
 
         FinalReport -- Generates --> FinalCSV
